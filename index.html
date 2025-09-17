@@ -121,7 +121,8 @@
   </div>
 
 <script>
-const webhookUrl = "https://vpjeammot.app.n8n.cloud/webhook-test/cashpack/devis"; // ← remplace par l'URL du Webhook n8n
+// ⬇️ Mets ICI l’URL **production** de ton Webhook n8n (pas /webhook-test/)
+const webhookUrl = "https://vpjeammot.app.n8n.cloud/webhook/cashpack/devis"; // ← remplace par la tienne
 
 const tbody = document.querySelector('#itemsTable tbody');
 const subtotalEl = document.getElementById('subtotal');
@@ -129,6 +130,7 @@ const totalEl = document.getElementById('total');
 const addItemBtn = document.getElementById('addItem');
 const tvaRateEl = document.getElementById('tva_rate');
 const discountEl = document.getElementById('discount');
+const submitBtn = document.getElementById('submitBtn');
 
 function addRow(desc='', qty=1, unit=0) {
   const tr = document.createElement('tr');
@@ -202,19 +204,36 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
     return;
   }
 
+  // Anti double-clic pendant l'envoi
+  submitBtn.disabled = true;
+  submitBtn.classList.add('secondary');
+
   try {
     const res = await fetch(webhookUrl, {
       method: 'POST',
+      mode: 'cors',           // important pour appel cross-origin
+      credentials: 'omit',    // on n’envoie pas de cookies
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    const data = await res.json();
-    if (!res.ok || !data.ok) throw new Error(data.error || "Erreur n8n");
+
+    // Tolérance si la réponse n’est pas JSON (par ex. si le header n’est pas encore réglé côté n8n)
+    let data = {};
+    const text = await res.text();
+    try { data = JSON.parse(text); } catch { data = { ok: res.ok, raw: text }; }
+
+    if (!res.ok || data.ok === false) {
+      throw new Error(data.error || `Erreur n8n (${res.status})`);
+    }
+
     status.textContent = "Devis envoyé à n8n ✅";
     status.className = "ok";
   } catch (e) {
     status.textContent = "Erreur: " + e.message;
     status.className = "err";
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.classList.remove('secondary');
   }
 });
 </script>
