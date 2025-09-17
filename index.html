@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>CashPack — Création Devis</title>
+<style>
+  :root { --bg:#0b0f14; --card:#121821; --muted:#94a3b8; --text:#e5e7eb; --accent:#10b981; --danger:#ef4444; }
+  body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto; background:var(--bg); color:var(--text); }
+  .wrap { max-width:900px; margin:40px auto; padding:20px; }
+  .card { background:var(--card); border-radius:16px; padding:24px; box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+  h1 { margin:0 0 12px; font-size:28px; }
+  .muted { color:var(--muted); font-size:14px; margin-bottom:20px; }
+  .grid { display:grid; gap:12px; grid-template-columns: 1fr 1fr; }
+  .grid-3 { grid-template-columns: 2fr 1fr 1fr; }
+  label { font-size:13px; color:var(--muted); display:block; margin-bottom:6px; }
+  input, textarea, select { width:100%; padding:10px 12px; border-radius:10px; border:1px solid #1f2937; background:#0f141b; color:var(--text); outline:none; }
+  textarea { min-height:90px; }
+  .row { margin:14px 0; }
+  .btn { background:var(--accent); color:#04130e; border:none; padding:12px 16px; border-radius:12px; font-weight:700; cursor:pointer; }
+  .btn.secondary { background:#1f2937; color:var(--text); }
+  .btn.danger { background:var(--danger); color:#fff; }
+  table { width:100%; border-collapse: collapse; margin-top:10px; }
+  th, td { padding:10px; border-bottom:1px solid #1f2937; text-align:left; }
+  tfoot td { font-weight:700; }
+  .right { text-align:right; }
+  .flex { display:flex; gap:8px; align-items:center; }
+  .pill { font-size:12px; background:#0f141b; border:1px solid #1f2937; padding:6px 10px; border-radius:999px; color:var(--muted); }
+  .ok { color:var(--accent); }
+  .err { color:var(--danger); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Créer un devis</h1>
+      <div class="muted">CashPack — Devis ➜ Facture ➜ Relances automatiques</div>
+
+      <!-- ENTREPRISE -->
+      <div class="grid">
+        <div class="row">
+          <label>Entreprise (affichée sur le devis)</label>
+          <input id="company_name" placeholder="Ex: SARL Dupont Bâtiment"/>
+        </div>
+        <div class="row">
+          <label>Email entreprise (reçoit la prévisualisation)</label>
+          <input id="company_email" type="email" placeholder="devis@entreprise.fr"/>
+        </div>
+        <div class="row">
+          <label>Téléphone</label>
+          <input id="company_phone" placeholder="+33 ..."/>
+        </div>
+        <div class="row">
+          <label>SIRET</label>
+          <input id="company_siret" placeholder="123 456 789 00012"/>
+        </div>
+      </div>
+
+      <!-- CLIENT -->
+      <div class="grid">
+        <div class="row">
+          <label>Client — Nom</label>
+          <input id="client_name" placeholder="Mme Martin"/>
+        </div>
+        <div class="row">
+          <label>Client — Email</label>
+          <input id="client_email" type="email" placeholder="client@email.fr"/>
+        </div>
+        <div class="row">
+          <label>Client — Téléphone</label>
+          <input id="client_phone" placeholder="+33 ..."/>
+        </div>
+        <div class="row">
+          <label>Chantier / Objet</label>
+          <input id="site_name" placeholder="Rénovation salle de bain"/>
+        </div>
+      </div>
+
+      <!-- LIGNES -->
+      <div class="row">
+        <div class="flex">
+          <div class="pill">Lignes du devis</div>
+          <button class="btn secondary" id="addItem">+ Ajouter une ligne</button>
+        </div>
+        <table id="itemsTable">
+          <thead>
+            <tr><th>Désignation</th><th class="right">Qté</th><th class="right">PU HT (€)</th></tr>
+          </thead>
+          <tbody></tbody>
+          <tfoot>
+            <tr><td class="right" colspan="2">Sous-total HT</td><td class="right" id="subtotal">0.00</td></tr>
+            <tr><td class="right" colspan="2">TVA (%)</td><td class="right"><input id="tva_rate" value="10" style="width:80px; text-align:right"/></td></tr>
+            <tr><td class="right" colspan="2">Remise HT (€)</td><td class="right"><input id="discount" value="0" style="width:80px; text-align:right"/></td></tr>
+            <tr><td class="right" colspan="2">TOTAL TTC (€)</td><td class="right" id="total">0.00</td></tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <!-- CONDITIONS -->
+      <div class="grid">
+        <div class="row">
+          <label>Acompte demandé (€ TTC, 0 si aucun)</label>
+          <input id="deposit_ttc" value="0"/>
+        </div>
+        <div class="row">
+          <label>Validité du devis (date)</label>
+          <input id="valid_until" type="date"/>
+        </div>
+      </div>
+
+      <div class="row">
+        <label>Notes / Conditions (affichées sur le devis)</label>
+        <textarea id="notes" placeholder="Délais, conditions particulières, garanties..."></textarea>
+      </div>
+
+      <div class="flex">
+        <button class="btn" id="submitBtn">Générer le devis</button>
+        <span id="status" class="muted"></span>
+      </div>
+    </div>
+  </div>
+
+<script>
+const webhookUrl = "https://vpjeammot.app.n8n.cloud/webhook-test/cashpack/devis"; // ← remplace par l'URL du Webhook n8n
+
+const tbody = document.querySelector('#itemsTable tbody');
+const subtotalEl = document.getElementById('subtotal');
+const totalEl = document.getElementById('total');
+const addItemBtn = document.getElementById('addItem');
+const tvaRateEl = document.getElementById('tva_rate');
+const discountEl = document.getElementById('discount');
+
+function addRow(desc='', qty=1, unit=0) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input class="desc" placeholder="Désignation" value="${desc}"/></td>
+    <td class="right"><input class="qty" type="number" min="0" step="1" value="${qty}" style="width:90px; text-align:right"/></td>
+    <td class="right"><input class="unit" type="number" min="0" step="0.01" value="${unit}" style="width:120px; text-align:right"/></td>
+  `;
+  tbody.appendChild(tr);
+  tr.querySelectorAll('input').forEach(i=> i.addEventListener('input', refreshTotals));
+  refreshTotals();
+}
+addItemBtn.addEventListener('click', () => addRow());
+
+function getItems() {
+  const rows = [...tbody.querySelectorAll('tr')];
+  return rows.map(r => {
+    const d = r.querySelector('.desc').value.trim();
+    const q = Number(r.querySelector('.qty').value || 0);
+    const u = Number(r.querySelector('.unit').value || 0);
+    return { description: d, qty: q, unit_price: u, line_total_ht: +(q*u).toFixed(2) };
+  }).filter(x => x.description);
+}
+
+function refreshTotals() {
+  const items = getItems();
+  const subtotal = items.reduce((s,i)=> s + i.line_total_ht, 0);
+  const tva = Number(tvaRateEl.value || 0);
+  const discount = Number(discountEl.value || 0);
+  const tvaTotal = (subtotal - discount) * (tva/100);
+  const total = Math.max(0, (subtotal - discount + tvaTotal));
+  subtotalEl.textContent = subtotal.toFixed(2);
+  totalEl.textContent = total.toFixed(2);
+}
+
+addRow("Main d'œuvre", 1, 50); // 1 ligne par défaut
+
+document.getElementById('submitBtn').addEventListener('click', async () => {
+  const status = document.getElementById('status');
+  status.textContent = "Envoi...";
+  status.className = "muted";
+
+  // Lecture champs
+  const payload = {
+    company: {
+      name: document.getElementById('company_name').value.trim(),
+      email: document.getElementById('company_email').value.trim(),
+      phone: document.getElementById('company_phone').value.trim(),
+      siret: document.getElementById('company_siret').value.trim(),
+    },
+    client: {
+      name: document.getElementById('client_name').value.trim(),
+      email: document.getElementById('client_email').value.trim(),
+      phone: document.getElementById('client_phone').value.trim(),
+    },
+    quote: {
+      site_name: document.getElementById('site_name').value.trim(),
+      valid_until: document.getElementById('valid_until').value,
+      notes: document.getElementById('notes').value.trim(),
+      tva_rate: Number(document.getElementById('tva_rate').value || 0),
+      discount_ht: Number(document.getElementById('discount').value || 0),
+      deposit_ttc: Number(document.getElementById('deposit_ttc').value || 0),
+    },
+    items: getItems()
+  };
+
+  // Validation basique côté client
+  if (!payload.client.name || !payload.client.email || payload.items.length === 0) {
+    status.textContent = "Champs manquants (client + au moins 1 ligne).";
+    status.className = "err";
+    return;
+  }
+
+  try {
+    const res = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || "Erreur n8n");
+    status.textContent = "Devis envoyé à n8n ✅";
+    status.className = "ok";
+  } catch (e) {
+    status.textContent = "Erreur: " + e.message;
+    status.className = "err";
+  }
+});
+</script>
+</body>
+</html>
