@@ -16,7 +16,7 @@ export default async function handler(req, res) {
 
   try {
     // 🔔 En phase de test n8n : utilise l’URL /webhook-test/ et clique "Listen for test event"
-    const n8nUrl = 'https://vpjeammot.app.n8n.cloud/webhook-test/cashpack/devis';
+    const n8nUrl = 'https://vpjeammot.app.n8n.cloud/webhook/cashpack/devis';
 
     const r = await fetch(n8nUrl, {
       method: 'POST',
