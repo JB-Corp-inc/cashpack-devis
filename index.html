@@ -121,17 +121,39 @@
   </div>
 
 <script>
-// ⬇️ Mets ICI l’URL **production** de ton Webhook n8n (pas /webhook-test/)
-const webhookUrl = "/api/cashpack-devis"; // ← remplace par la tienne
+/* =========================
+   Réglages
+========================= */
+// On passe toujours par l’API Vercel (elle proxy vers n8n test ou prod)
+const webhookUrl = "/api/cashpack-devis";
 
-const tbody = document.querySelector('#itemsTable tbody');
-const subtotalEl = document.getElementById('subtotal');
-const totalEl = document.getElementById('total');
-const addItemBtn = document.getElementById('addItem');
-const tvaRateEl = document.getElementById('tva_rate');
-const discountEl = document.getElementById('discount');
-const submitBtn = document.getElementById('submitBtn');
+/* =========================
+   Helpers UI / Format
+========================= */
+const fmt = new Intl.NumberFormat('fr-FR', { style:'decimal', maximumFractionDigits: 2, minimumFractionDigits: 2 });
+const $ = (sel, root=document) => root.querySelector(sel);
+const $$ = (sel, root=document) => [...root.querySelectorAll(sel)];
+const readNum = (v) => {
+  const n = Number(String(v).replace(',', '.'));
+  return Number.isFinite(n) ? n : 0;
+};
+const r2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 
+/* =========================
+   Récup des éléments
+========================= */
+const tbody = $('#itemsTable tbody');
+const subtotalEl = $('#subtotal');
+const totalEl = $('#total');
+const addItemBtn = $('#addItem');
+const tvaRateEl = $('#tva_rate');
+const discountEl = $('#discount');
+const submitBtn = $('#submitBtn');
+const statusEl = $('#status');
+
+/* =========================
+   Lignes & Totaux
+========================= */
 function addRow(desc='', qty=1, unit=0) {
   const tr = document.createElement('tr');
   tr.innerHTML = `
@@ -140,102 +162,179 @@ function addRow(desc='', qty=1, unit=0) {
     <td class="right"><input class="unit" type="number" min="0" step="0.01" value="${unit}" style="width:120px; text-align:right"/></td>
   `;
   tbody.appendChild(tr);
-  tr.querySelectorAll('input').forEach(i=> i.addEventListener('input', refreshTotals));
-  refreshTotals();
+  $$('input', tr).forEach(i => i.addEventListener('input', refreshTotals));
+  refreshTotals(); saveDraft();
 }
 addItemBtn.addEventListener('click', () => addRow());
 
 function getItems() {
-  const rows = [...tbody.querySelectorAll('tr')];
-  return rows.map(r => {
-    const d = r.querySelector('.desc').value.trim();
-    const q = Number(r.querySelector('.qty').value || 0);
-    const u = Number(r.querySelector('.unit').value || 0);
-    return { description: d, qty: q, unit_price: u, line_total_ht: +(q*u).toFixed(2) };
-  }).filter(x => x.description);
+  return $$('#itemsTable tbody tr')
+    .map(tr => {
+      const d = $('.desc', tr).value.trim();
+      const q = readNum($('.qty', tr).value);
+      const u = readNum($('.unit', tr).value);
+      return { description: d, qty: Math.max(0, q|0), unit_price: r2(Math.max(0, u)), line_total_ht: r2(Math.max(0, q) * Math.max(0, u)) };
+    })
+    .filter(x => x.description && (x.qty > 0 || x.unit_price > 0));
 }
 
 function refreshTotals() {
   const items = getItems();
-  const subtotal = items.reduce((s,i)=> s + i.line_total_ht, 0);
-  const tva = Number(tvaRateEl.value || 0);
-  const discount = Number(discountEl.value || 0);
-  const tvaTotal = (subtotal - discount) * (tva/100);
-  const total = Math.max(0, (subtotal - discount + tvaTotal));
-  subtotalEl.textContent = subtotal.toFixed(2);
-  totalEl.textContent = total.toFixed(2);
+  const subtotal = r2(items.reduce((s,i)=> s + i.line_total_ht, 0));
+  const tva = readNum(tvaRateEl.value);
+  const discount = r2(Math.max(0, readNum(discountEl.value)));
+  const base = Math.max(0, subtotal - discount);
+  const tvaTotal = r2(base * (tva/100));
+  const total = r2(base + tvaTotal);
+  subtotalEl.textContent = fmt.format(subtotal);
+  totalEl.textContent = fmt.format(total);
 }
 
-addRow("Main d'œuvre", 1, 50); // 1 ligne par défaut
+/* =========================
+   Brouillon local (auto-save)
+========================= */
+const FIELDS = [
+  'company_name','company_email','company_phone','company_siret',
+  'client_name','client_email','client_phone','site_name',
+  'valid_until','notes','tva_rate','discount','deposit_ttc'
+];
+function saveDraft() {
+  const draft = Object.fromEntries(FIELDS.map(id => [id, $('#'+id)?.value ?? '']));
+  draft.items = getItems();
+  localStorage.setItem('cashpack_devis_draft', JSON.stringify(draft));
+}
+function loadDraft() {
+  const raw = localStorage.getItem('cashpack_devis_draft');
+  if (!raw) return;
+  try {
+    const d = JSON.parse(raw);
+    FIELDS.forEach(id => { if ($('#'+id) && id in d) $('#'+id).value = d[id]; });
+    tbody.innerHTML = '';
+    (d.items && d.items.length ? d.items : [{description:"Main d'œuvre", qty:1, unit_price:50}])
+      .forEach(it => addRow(it.description, it.qty, it.unit_price));
+    refreshTotals();
+  } catch {}
+}
+document.addEventListener('input', (e) => {
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) saveDraft();
+});
 
-document.getElementById('submitBtn').addEventListener('click', async () => {
-  const status = document.getElementById('status');
-  status.textContent = "Envoi...";
-  status.className = "muted";
-
-  // Lecture champs
-  const payload = {
+/* =========================
+   Bouton Submit
+========================= */
+function buildPayload() {
+  return {
     company: {
-      name: document.getElementById('company_name').value.trim(),
-      email: document.getElementById('company_email').value.trim(),
-      phone: document.getElementById('company_phone').value.trim(),
-      siret: document.getElementById('company_siret').value.trim(),
+      name: $('#company_name').value.trim(),
+      email: $('#company_email').value.trim(),
+      phone: $('#company_phone').value.trim(),
+      siret: $('#company_siret').value.trim(),
     },
     client: {
-      name: document.getElementById('client_name').value.trim(),
-      email: document.getElementById('client_email').value.trim(),
-      phone: document.getElementById('client_phone').value.trim(),
+      name: $('#client_name').value.trim(),
+      email: $('#client_email').value.trim(),
+      phone: $('#client_phone').value.trim(),
     },
     quote: {
-      site_name: document.getElementById('site_name').value.trim(),
-      valid_until: document.getElementById('valid_until').value,
-      notes: document.getElementById('notes').value.trim(),
-      tva_rate: Number(document.getElementById('tva_rate').value || 0),
-      discount_ht: Number(document.getElementById('discount').value || 0),
-      deposit_ttc: Number(document.getElementById('deposit_ttc').value || 0),
+      site_name: $('#site_name').value.trim(),
+      valid_until: $('#valid_until').value,
+      notes: $('#notes').value.trim(),
+      tva_rate: readNum($('#tva_rate').value),
+      discount_ht: readNum($('#discount').value),
+      deposit_ttc: readNum($('#deposit_ttc').value),
     },
-    items: getItems()
+    items: getItems(),
   };
+}
 
-  // Validation basique côté client
-  if (!payload.client.name || !payload.client.email || payload.items.length === 0) {
-    status.textContent = "Champs manquants (client + au moins 1 ligne).";
-    status.className = "err";
+// Alt + clic sur le bouton => aperçu JSON (ne rien envoyer)
+submitBtn.addEventListener('click', (ev) => {
+  if (ev.altKey) {
+    ev.preventDefault();
+    const preview = buildPayload();
+    alert("Aperçu du payload envoyé à n8n:\n\n" + JSON.stringify(preview, null, 2));
+  }
+});
+
+$('#submitBtn').addEventListener('click', async (ev) => {
+  ev.preventDefault();
+
+  const payload = buildPayload();
+
+  // Validation minimale côté client
+  if (!payload.client.name) {
+    statusEl.textContent = "Nom du client manquant.";
+    statusEl.className = "err";
+    return;
+  }
+  if (!payload.client.email) {
+    statusEl.textContent = "Email du client manquant.";
+    statusEl.className = "err";
+    return;
+  }
+  if (payload.items.length === 0) {
+    statusEl.textContent = "Ajoute au moins une ligne (Qté > 0).";
+    statusEl.className = "err";
     return;
   }
 
-  // Anti double-clic pendant l'envoi
+  // Anti double-clic
   submitBtn.disabled = true;
   submitBtn.classList.add('secondary');
+  const oldText = submitBtn.textContent;
+  submitBtn.textContent = "Envoi…";
+  statusEl.textContent = "Envoi…";
+  statusEl.className = "muted";
 
   try {
     const res = await fetch(webhookUrl, {
       method: 'POST',
-      mode: 'cors',           // important pour appel cross-origin
-      credentials: 'omit',    // on n’envoie pas de cookies
+      mode: 'cors',
+      credentials: 'omit',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
 
-    // Tolérance si la réponse n’est pas JSON (par ex. si le header n’est pas encore réglé côté n8n)
-    let data = {};
     const text = await res.text();
+    let data; 
     try { data = JSON.parse(text); } catch { data = { ok: res.ok, raw: text }; }
 
     if (!res.ok || data.ok === false) {
-      throw new Error(data.error || `Erreur n8n (${res.status})`);
+      let errMsg = "";
+      switch (res.status) {
+        case 400: errMsg = "Requête invalide : vérifie les champs envoyés."; break;
+        case 401: errMsg = "Non autorisé : vérifie la configuration n8n/credentials."; break;
+        case 404: errMsg = "Webhook introuvable : en TEST, clique 'Listen for test event' ; en PROD, active le workflow."; break;
+        case 405: errMsg = "Méthode HTTP non autorisée (attendu : POST)."; break;
+        case 415: errMsg = "Type de contenu non supporté (Content-Type attendu: application/json)."; break;
+        case 429: errMsg = "Trop de requêtes (rate limit). Réessaie dans un instant."; break;
+        case 500: errMsg = "Erreur interne côté n8n. Vérifie tes nœuds/logs."; break;
+        default:  errMsg = data?.error || `Erreur inattendue (${res.status})`;
+      }
+      // Si n8n a renvoyé un texte utile, on l’ajoute
+      if (data?.raw && typeof data.raw === 'string' && data.raw.length < 500) {
+        errMsg += ` — Détail: ${data.raw}`;
+      }
+      throw new Error(errMsg);
     }
 
-    status.textContent = "Devis envoyé à n8n ✅";
-    status.className = "ok";
+    statusEl.textContent = "Devis envoyé à n8n ✅";
+    statusEl.className = "ok";
+
   } catch (e) {
-    status.textContent = "Erreur: " + e.message;
-    status.className = "err";
+    statusEl.textContent = "Erreur: " + (e?.message || "inconnue");
+    statusEl.className = "err";
   } finally {
     submitBtn.disabled = false;
     submitBtn.classList.remove('secondary');
+    submitBtn.textContent = oldText;
   }
 });
+
+/* =========================
+   Init
+========================= */
+loadDraft();
+if ($$('#itemsTable tbody tr').length === 0) addRow("Main d'œuvre", 1, 50);
+refreshTotals();
 </script>
-</body>
-</html>
